@@ -75,3 +75,28 @@ services:
       - 3001:3000
     profiles: ["discord"]
     restart: always
+
+  telegram-bot:
+    container_name: gptr-telegram-bot
+    build:
+      context: .
+      dockerfile: Dockerfile.telegram
+    env_file:
+      - .env
+    environment:
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+      - GROQ_API_KEY=${GROQ_API_KEY:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - FAST_LLM=${FAST_LLM:-google_genai:gemini-3.5-flash}
+      - SMART_LLM=${SMART_LLM:-google_genai:gemini-3.5-flash}
+      - STRATEGIC_LLM=${STRATEGIC_LLM:-google_genai:gemini-3.5-flash}
+      - RETRIEVER=${RETRIEVER:-duckduckgo}
+      - CONTEXT_FILTER=${CONTEXT_FILTER:-auto}
+      - DOC_PATH=/app/my-docs
+    volumes:
+      - ./my-docs:/app/my-docs:rw
+      - ./outputs:/app/outputs:rw
+      - ./logs:/app/logs:rw
+    restart: unless-stopped
+

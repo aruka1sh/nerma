@@ -1,0 +1,21 @@
+services:
+  - type: worker
+    name: gptr-telegram-bot
+    runtime: docker
+    dockerfilePath: ./Dockerfile.telegram
+    autoDeploy: true
+    envVars:
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: GOOGLE_API_KEY
+        sync: false
+      - key: FAST_LLM
+        value: google_genai:gemini-3.5-flash
+      - key: SMART_LLM
+        value: google_genai:gemini-3.5-flash
+      - key: STRATEGIC_LLM
+        value: google_genai:gemini-3.5-flash
+      - key: RETRIEVER
+        value: duckduckgo
+      - key: CONTEXT_FILTER
+        value: auto

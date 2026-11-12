@@ -358,6 +358,24 @@ class GenericLLMProvider:
         return cls(llm, chat_log, verbose=verbose)
 
 
+    @staticmethod
+    def _normalize_content(content: Any) -> str:
+        """Convert LangChain AIMessage content (str or list of content blocks) to a plain string."""
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            parts = []
+            for item in content:
+                if isinstance(item, str):
+                    parts.append(item)
+                elif isinstance(item, dict):
+                    if "text" in item and isinstance(item["text"], str):
+                        parts.append(item["text"])
+                    elif "content" in item and isinstance(item["content"], str):
+                        parts.append(item["content"])
+            return "".join(parts)
+        return str(content or "")
+
     async def get_chat_response(self, messages, stream, websocket=None, **kwargs):
         self._reset_last_response_metadata()
         if not stream:
@@ -365,7 +383,7 @@ class GenericLLMProvider:
             output = await self.llm.ainvoke(messages, **kwargs)
             self._capture_response_metadata(output)
 
-            res = output.content
+            res = self._normalize_content(output.content)
 
         else:
             res = await self.stream_response(messages, websocket, **kwargs)
@@ -383,7 +401,7 @@ class GenericLLMProvider:
         # Streaming the response using the chain astream method from langchain
         async for chunk in self.llm.astream(messages, **kwargs):
             self._capture_response_metadata(chunk)
-            content = chunk.content
+            content = self._normalize_content(chunk.content)
             if not content:
                 continue
             response += content

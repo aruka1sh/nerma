@@ -62,6 +62,7 @@ async def get_search_results(
         A list of search results
     """
     import asyncio
+    import os
 
     # Check if this is an MCP retriever and pass the researcher instance
     if "mcpretriever" in retriever.__name__.lower():
@@ -77,8 +78,25 @@ async def get_search_results(
     if max_results is not None:
         search_kwargs["max_results"] = max_results
 
-    # Retriever searches are blocking HTTP calls; keep the event loop free
-    return await asyncio.to_thread(search_retriever.search, **search_kwargs)
+    timeout_sec = float(os.getenv("SEARCH_TIMEOUT_SEC", "20"))
+    try:
+        results = await asyncio.wait_for(
+            asyncio.to_thread(search_retriever.search, **search_kwargs),
+            timeout=timeout_sec,
+        )
+    except asyncio.TimeoutError:
+        logger.warning("Retriever %s timed out after %ss for query '%s'", retriever.__name__, timeout_sec, query[:80])
+        results = []
+        if hasattr(search_retriever, "last_search_meta"):
+            search_retriever.last_search_meta["failure_reason"] = "timeout"
+            search_retriever.last_search_meta.setdefault("errors", []).append(f"timeout:{timeout_sec}s")
+
+    if researcher is not None and hasattr(search_retriever, "last_search_meta") and search_retriever.last_search_meta:
+        if not hasattr(researcher, "search_telemetry"):
+            researcher.search_telemetry = []
+        researcher.search_telemetry.append(dict(search_retriever.last_search_meta))
+
+    return results
 
 async def generate_sub_queries(
     query: str,

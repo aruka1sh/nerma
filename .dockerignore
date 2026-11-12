@@ -1,2 +1,11 @@
+node_modules
+.venv
+venv
+__pycache__
+*.pyc
 .git
-output/
+.env
+outputs/*
+logs/*
+frontend/nextjs/.next
+frontend/nextjs/node_modules

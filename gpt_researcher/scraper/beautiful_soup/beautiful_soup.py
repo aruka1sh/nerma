@@ -65,22 +65,18 @@ class BeautifulSoupScraper:
             logger.warning(f"No session provided for {self.link}; cannot fetch")
             return None
 
-        for attempt in (1, 2):
+        for attempt in (1,):
             try:
-                response = self.session.get(self.link, timeout=10)
+                response = self.session.get(self.link, timeout=5)
             except Exception as e:
                 logger.warning(f"Request failed for {self.link} (attempt {attempt}): {e}")
-                if attempt == 1:
-                    time.sleep(1)
-                    continue
                 return None
 
             if response.status_code in RETRYABLE_STATUS_CODES and attempt == 1:
                 logger.warning(
-                    f"Got HTTP {response.status_code} for {self.link}, retrying once"
+                    f"Got HTTP {response.status_code} for {self.link}, skipping"
                 )
-                time.sleep(1)
-                continue
+                return None
 
             if response.status_code >= 400:
                 # Don't parse error/paywall pages as if they were content

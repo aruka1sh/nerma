@@ -324,10 +324,11 @@ class GPTResearcher:
         """Helper method to handle logging events"""
         if self.log_handler:
             try:
+                extra = {k: v for k, v in kwargs.items() if k not in ("tool_name", "action")}
                 if event_type == "tool":
-                    await self.log_handler.on_tool_start(kwargs.get('tool_name', ''), **kwargs)
+                    await self.log_handler.on_tool_start(kwargs.get('tool_name', ''), **extra)
                 elif event_type == "action":
-                    await self.log_handler.on_agent_action(kwargs.get('action', ''), **kwargs)
+                    await self.log_handler.on_agent_action(kwargs.get('action', ''), **extra)
                 elif event_type == "research":
                     await self.log_handler.on_research_step(kwargs.get('step', ''), kwargs.get('details', {}))
 
@@ -555,8 +556,17 @@ class GPTResearcher:
                 query, self.retrievers[0], query_domains=query_domains, researcher=self
             )
 
+        for item in search_results or []:
+            if isinstance(item, dict):
+                url = item.get("href") or item.get("url")
+                if url:
+                    self.visited_urls.add(url)
+
         if not aggregated_summary:
             return search_results
+
+        if not search_results:
+            return ""
 
         # Format results for summary. Search retrievers return records keyed
         # by "href" (URL) and "body" (content); fall back to the alternate
@@ -799,8 +809,13 @@ class GPTResearcher:
         step = self._current_step
         self.step_costs[step] = self.step_costs.get(step, 0.0) + cost
         if self.log_handler:
-            self._log_event("research", step="cost_update", details={
+            coro = self._log_event("research", step="cost_update", details={
                 "cost": cost,
                 "total_cost": self.research_costs,
                 "step_name": step,
             })
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(coro)
+            except RuntimeError:
+                coro.close()

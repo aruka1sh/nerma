@@ -262,24 +262,44 @@ class DeepResearchSkill:
         self.research_sources = []  # Track all research sources
         self.context = []  # Track all context
 
+    def _is_drifted_query(self, candidate_query: str) -> bool:
+        """Return True if a generated sub-query drifts into modern versions when the root query is historical."""
+        root_q = (self.researcher.query or "").lower()
+        cand_q = (candidate_query or "").lower()
+        is_historical_python = "python" in root_q and any(
+            kw in root_q
+            for kw in ("перв", "создал", "истори", "0.9", "1991", "first version", "who created", "history")
+        )
+        if is_historical_python and not any(v in root_q for v in ("3.13", "3.14", "3.15", "3.16")):
+            import re
+
+            if re.search(r"\b(?:3\.1[2-9]|pep\s*826|end\s+of\s+life|release\s+schedule\s+3\.)\b", cand_q):
+                return True
+        return False
+
     async def generate_search_queries(self, query: str, num_queries: int = 3) -> List[Dict[str, str]]:
-        """Generate SERP queries for research"""
+        """Generate SERP queries for research anchored to the original user question."""
+        root_question = self.researcher.query or query
         messages = [
             {
                 "role": "system",
                 "content": (
                     "You are an expert researcher generating search queries. "
+                    "Every search query MUST stay strictly focused on answering the Original User Question. "
+                    "Do NOT expand into unrelated modern software versions, future release schedules, or tangential topics. "
+                    "Keep each search query concise (4 to 10 keywords). "
                     "Return valid JSON only. Do not include markdown, code fences, bullets, numbering, or prose."
                 ),
             },
             {
                 "role": "user",
                 "content": (
-                    f"Given the following prompt, generate {num_queries} unique search queries to research the topic thoroughly. "
-                    "For each query, provide a research goal.\n\n"
+                    f"Original User Question: {root_question}\n\n"
+                    f"Current Research Context: {query}\n\n"
+                    f"Generate {num_queries} unique, concise search queries that directly help answer the Original User Question. "
+                    "Stay strictly within the time period and scope requested by the user.\n\n"
                     "Return ONLY a JSON array of objects using this exact schema:\n"
-                    '[{"query": "<search query>", "researchGoal": "<research goal>"}]\n\n'
-                    f"Prompt: {query}"
+                    '[{"query": "<search query>", "researchGoal": "<research goal>"}]'
                 ),
             },
         ]
@@ -289,14 +309,16 @@ class DeepResearchSkill:
             llm_provider=self.researcher.cfg.strategic_llm_provider,
             model=self.researcher.cfg.strategic_llm_model,
             reasoning_effort=self.researcher.cfg.reasoning_effort,
-            temperature=0.4,
+            temperature=0.3,
             llm_kwargs=self.researcher.cfg.llm_kwargs
         )
 
-        return parse_search_queries_response(response, num_queries)
+        parsed = parse_search_queries_response(response, num_queries)
+        filtered = [item for item in parsed if not self._is_drifted_query(item.get("query", ""))]
+        return filtered or parsed[:1]
 
     async def generate_research_plan(self, query: str, num_questions: int = 3) -> List[str]:
-        """Generate follow-up questions to clarify research direction"""
+        """Generate follow-up questions anchored to the original query scope."""
         # Get initial search results from all retrievers to inform query generation
         all_search_results = []
         for retriever in self.researcher.retrievers:
@@ -312,27 +334,23 @@ class DeepResearchSkill:
         search_results = all_search_results
         logger.info(f"Initial web knowledge obtained: {len(search_results)} results")
 
-        # Get current time for context
-        current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
         messages = [
             {
                 "role": "system",
                 "content": (
-                    "You are an expert researcher. Your task is to analyze the original query and search results, "
-                    "then generate targeted questions that explore different aspects and time periods of the topic. "
-                    "Return valid JSON only."
+                    "You are an expert researcher. Your task is to analyze the original query and initial search results, "
+                    "then generate targeted sub-questions that directly help answer the user's exact question. "
+                    "Do NOT expand into unrelated time periods, modern software releases, or tangential subtopics "
+                    "unless explicitly asked by the user. Return valid JSON only."
                 ),
             },
             {"role": "user",
              "content": f"""Original query: {query}
 
-Current time: {current_time}
-
 Search results:
 {search_results}
 
-Based on these results, the original query, and the current time, generate {num_questions} unique questions. Each question should explore a different aspect or time period of the topic, considering recent developments up to {current_time}.
+Based on the original query and search results, generate {num_questions} focused questions that directly help answer the Original query and verify facts from authoritative sources. Stay strictly within the scope and time period of the Original query.
 
 Return ONLY a JSON object using this exact schema:
 {{"questions": ["<question 1>", "<question 2>"]}}"""}
@@ -343,26 +361,31 @@ Return ONLY a JSON object using this exact schema:
             llm_provider=self.researcher.cfg.strategic_llm_provider,
             model=self.researcher.cfg.strategic_llm_model,
             reasoning_effort=ReasoningEfforts.High.value,
-            temperature=0.4,
+            temperature=0.3,
             llm_kwargs=self.researcher.cfg.llm_kwargs
         )
 
-        return parse_follow_up_questions_response(response, num_questions)
+        questions = parse_follow_up_questions_response(response, num_questions)
+        return [q for q in questions if not self._is_drifted_query(q)] or questions[:1]
 
     async def process_research_results(self, query: str, context: str, num_learnings: int = 3) -> Dict[str, List[str]]:
-        """Process research results to extract learnings and follow-up questions"""
+        """Process research results to extract learnings and follow-up questions anchored to root query."""
+        root_question = self.researcher.query or query
         messages = [
             {
                 "role": "system",
                 "content": (
-                    "You are an expert researcher analyzing search results. "
-                    "Return valid JSON only."
+                    "You are an expert researcher analyzing search results to answer the user's original question. "
+                    "Ignore tangential details (such as unrelated modern software version numbers in documentation headers) "
+                    "that do not pertain to the user's question. Return valid JSON only."
                 ),
             },
             {"role": "user",
              "content": (
-                 f"Given the following research results for the query '{query}', extract key learnings and suggest "
-                 "follow-up questions. For each learning, include a citation to the source URL if available.\n\n"
+                 f"Original user question: '{root_question}'\n"
+                 f"Sub-query: '{query}'\n\n"
+                 "Extract key learnings relevant to the Original user question and suggest focused follow-up questions "
+                 "only if needed to answer the Original user question. For each learning, include the source URL if available.\n\n"
                  "Return ONLY a JSON object using this exact schema:\n"
                  '{"learnings": [{"insight": "<insight>", "sourceUrl": "<url or empty string>"}], '
                  '"followUpQuestions": ["<question 1>", "<question 2>"]}\n\n'
@@ -374,14 +397,19 @@ Return ONLY a JSON object using this exact schema:
             messages=messages,
             llm_provider=self.researcher.cfg.strategic_llm_provider,
             model=self.researcher.cfg.strategic_llm_model,
-            temperature=0.4,
+            temperature=0.3,
             reasoning_effort=ReasoningEfforts.High.value,
             # Needs headroom for reasoning tokens on reasoning models
             max_tokens=4000,
             llm_kwargs=self.researcher.cfg.llm_kwargs
         )
 
-        return parse_research_results_response(response, num_learnings)
+        parsed = parse_research_results_response(response, num_learnings)
+        if "followUpQuestions" in parsed:
+            parsed["followUpQuestions"] = [
+                q for q in parsed["followUpQuestions"] if not self._is_drifted_query(q)
+            ]
+        return parsed
 
     async def deep_research(
             self,
@@ -542,11 +570,12 @@ Return ONLY a JSON object using this exact schema:
                 new_depth = depth - 1
                 progress.current_depth += 1
 
-                # Create next query from research goal and follow-up questions
-                next_query = f"""
-                Previous research goal: {result['researchGoal']}
-                Follow-up questions: {' '.join(result['followUpQuestions'])}
-                """
+                # Create next query from original question, research goal, and follow-up questions
+                next_query = (
+                    f"Original user question: {self.researcher.query}\n"
+                    f"Previous research goal: {result['researchGoal']}\n"
+                    f"Follow-up questions: {' '.join(result['followUpQuestions'])}"
+                )
 
                 # Recursive research
                 deeper_results = await self.deep_research(

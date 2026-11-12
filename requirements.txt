@@ -68,3 +68,9 @@ json-repair>=0.29.8
 json5>=0.9.25
 markdown>=3.5.1
 
+# Telegram Bot & Free-Tier LLM Integrations
+python-telegram-bot>=21.0
+langchain-google-genai>=2.0.0
+langchain-groq>=0.2.0
+
+
